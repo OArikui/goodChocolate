@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""必要圧力の計算・側面角 alpha の評価ツール v0.3.0
+"""必要圧力の計算・側面角 alpha の評価ツール v0.3.1
 
 モデルの範囲
 ------------
@@ -40,7 +40,7 @@ try:
 except ImportError:  # GUI が使えない環境でも計算関数は import できる
     tk = None
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 matplotlib.rcParams["font.family"] = "sans-serif"
 matplotlib.rcParams["font.sans-serif"] = [
@@ -52,20 +52,28 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 G = 9.80665  # 重力加速度 [m/s^2]
 DENOMINATOR_MIN = 0.02  # 支持不能・数値的不安定な条件を除く閾値
 
+# 初期値の位置づけ:
+# - mass_g=15 g: 比較用の仮の試料質量。実験では試料を秤量して入力する。
+# - contact_area_mm2=30 mm^2: 指腹-ガラス接触の文献データから得た参考推定値。
+#   チョコレート-指の直接測定値ではないため、実測前の仮定値として扱う。
+# - safety_factor=1: 滑りを防ぐ理論上の最小保持力を評価する。
+# - mu_mean=0.50: チョコレート-指の実測値がないため、探索用の暫定基準値。
+# - mu_cv=0: 個人差の実測データがないため、根拠のないばらつきを加えない。
+# - alpha=0..75 deg: mu=0.3..0.7 の仮想感度範囲で理論最適角を含む。
 DEFAULT_MODEL = {
     "mass_g": 15.0,
-    "contact_area_mm2": 100.0,
-    "safety_factor": 3.0,
+    "contact_area_mm2": 30.0,
+    "safety_factor": 1.0,
 }
 DEFAULT_HAND = {
     "mu_mean": 0.5,
-    "mu_cv": 25.0,
+    "mu_cv": 0.0,
     "sample_count": 500,
 }
 DEFAULT_ALPHA = {
-    "alpha_min": -10.0,
-    "alpha_max": 35.0,
-    "alpha_steps": 91,
+    "alpha_min": 0.0,
+    "alpha_max": 75.0,
+    "alpha_steps": 751,
 }
 
 
@@ -279,6 +287,13 @@ def make_summary(result: dict) -> str:
         f"  安全率 SF = {model['safety_factor']:.3f}",
         f"  摩擦係数 μ の平均 = {result['hand']['mu_mean']:.3f}",
         f"  μ の変動係数 CV = {result['hand']['mu_cv']:.1f}%",
+        f"  μ の理論最適角（一定 μ の場合） = {math.degrees(math.atan(1.0 / result['hand']['mu_mean'])):.2f}°" if result['hand']['mu_mean'] > 0 else "  μ=0 のため理論最適角を有限値で定義できません",
+        "",
+        "■ 初期値の根拠・注意",
+        "  ・μ=0.50 はチョコレートと指の直接測定値ではなく、暫定的な基準値",
+        "  ・A=30 mm² は指腹とガラスの文献データに基づく参考推定値で、チョコレートとの実測値ではない",
+        "  ・μ の CV=0% は個人差がないという意味ではなく、個人差データをまだ入力していないという意味",
+        "  ・SF=1.0 は理論上の最小保持力。実用上の余裕は別条件で評価する",
         "",
         "■ モデルの仮定",
         "  ・左右2本の指で対称につまむ",
@@ -374,10 +389,10 @@ class App:
             DEFAULT_ALPHA,
         )
 
-        self.mean_only = tk.BooleanVar(value=False)
+        self.mean_only = tk.BooleanVar(value=True)
         ttk.Checkbutton(left, text="摩擦係数の個人差を無視（平均値のみ）", variable=self.mean_only).pack(anchor="w", pady=(5, 2))
 
-        self.objective = tk.StringVar(value="p95")
+        self.objective = tk.StringVar(value="mean")
         objective_frame = ttk.LabelFrame(left, text="最適化基準", padding=6)
         objective_frame.pack(fill="x", pady=4)
         ttk.Radiobutton(objective_frame, text="95%点の圧力を最小化（余裕を重視）", variable=self.objective, value="p95").pack(anchor="w")
@@ -393,9 +408,11 @@ class App:
         self.output.pack(fill="both", expand=True, pady=(4, 0))
         self.output.insert(
             "end",
-            "接触面積 A は片側の指について入力してください。\n"
-            "この面積は alpha によらず一定と仮定します。\n"
-            "計算されるのは保持に必要な圧力であり、溶解量ではありません。",
+            "初期条件: m=15 g, A=30 mm², SF=1, μ=0.50\n"
+            "α は 0～75°を 0.1°刻みで探索します。\n"
+            "A は片側の指の面積で、全角度で一定と仮定します。\n"
+            "μ=0.50 と A=30 mm² は実測前の暫定値です。\n"
+            "計算対象は保持に必要な圧力であり、溶解量ではありません。",
         )
 
         self.figure = Figure(figsize=(8.2, 6.5), dpi=100)
